@@ -58,7 +58,7 @@ log = logging.getLogger("VisionTrack.App")
 # FLASK APP
 # =============================================================================
 
-app      = Flask(__name__)
+app      = Flask(__name__, template_folder='template')
 detector = HumanDetector()
 
 # =============================================================================
