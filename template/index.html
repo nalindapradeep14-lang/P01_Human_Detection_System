@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VisionTrack Edu — Human Detection</title>
+
+  <!-- Share Tech Mono: techy monospace for data readouts -->
+  <!-- Barlow Condensed: authoritative label font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ── Design tokens ─────────────────────────────────────────── */
+    :root {
+      --bg-deep:     #0b0d10;
+      --bg-panel:    #111318;
+      --bg-card:     #161920;
+      --bg-lift:     #1c1f28;
+
+      --border:      #232730;
+      --border-hi:   #2e3340;
+
+      --accent:      #00e676;      /* electric green — surveillance feel */
+      --accent-dim:  #00c85a;
+      --accent-glow: rgba(0, 230, 118, 0.18);
+
+      --danger:      #ff3d57;
+      --warn:        #ffc107;
+
+      --text-1:      #e8ecf0;
+      --text-2:      #8892a0;
+      --text-3:      #4a5260;
+
+      --mono:        'Share Tech Mono', monospace;
+      --sans:        'Barlow Condensed', sans-serif;
+
+      --radius:      6px;
+      --radius-lg:   12px;
+      --shadow:      0 4px 24px rgba(0,0,0,.55);
+    }
+
+    /* ── Reset ──────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+
+    body {
+      background: var(--bg-deep);
+      color: var(--text-1);
+      font-family: var(--sans);
+      font-size: 15px;
+      letter-spacing: .02em;
+      overflow-x: hidden;
+    }
+
+    /* ── Scan-line texture overlay ──────────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,.04) 2px,
+        rgba(0,0,0,.04) 4px
+      );
+      pointer-events: none;
+      z-index: 1000;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────────── */
+    .shell {
+      display: grid;
+      grid-template-rows: 56px 1fr;
+      min-height: 100vh;
+    }
+
+    /* ── Top bar ────────────────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 28px;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      width: 30px; height: 30px;
+      border: 2px solid var(--accent);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      position: relative;
+    }
+    .brand-icon::after {
+      content: '';
+      width: 10px; height: 10px;
+      background: var(--accent);
+      border-radius: 50%;
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50%       { transform: scale(1.3); opacity: .6; }
+    }
+
+    .brand-name {
+      font-family: var(--sans);
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--text-1);
+    }
+    .brand-name span { color: var(--accent); }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    /* Live / Offline badge */
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-family: var(--mono);
+      font-size: 12px;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--text-2);
+      transition: color .3s;
+    }
+    .status-badge.live { color: var(--accent); }
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--text-3);
+      transition: background .3s;
+    }
+    .status-badge.live .status-dot {
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+      animation: blink 1.2s step-start infinite;
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: .3; }
+    }
+
+    .clock {
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--text-2);
+    }
+
+    /* ── Main content ───────────────────────────────────────────── */
+    main {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 20px;
+      padding: 20px 28px;
+      align-items: start;
+    }
+
+    /* ── Video panel ────────────────────────────────────────────── */
+    .video-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .video-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+      color: var(--text-3);
+    }
+
+    .video-wrapper {
+      position: relative;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+
+    /* Corner brackets — surveillance aesthetic */
+    .video-wrapper::before,
+    .video-wrapper::after {
+      content: '';
+      position: absolute;
+      width: 20px; height: 20px;
+      border-color: var(--accent);
+      border-style: solid;
+      z-index: 2;
+    }
+    .video-wrapper::before {
+      top: 12px; left: 12px;
+      border-width: 2px 0 0 2px;
+    }
+    .video-wrapper::after {
+      bottom: 12px; right: 12px;
+      border-width: 0 2px 2px 0;
+    }
+
+    .cam-feed {
+      display: block;
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      object-fit: cover;
+      filter: contrast(1.05) saturate(0.9);
+    }
+
+    /* REC indicator */
+    .rec-badge {
+      position: absolute;
+      top: 14px; right: 16px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: .12em;
+      color: var(--danger);
+      opacity: 0;
+      transition: opacity .4s;
+      z-index: 3;
+    }
+    .rec-badge.visible { opacity: 1; }
+    .rec-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--danger);
+      animation: blink 1s step-start infinite;
+    }
+
+    /* Channel label */
+    .channel-label {
+      position: absolute;
+      bottom: 14px; left: 16px;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-3);
+      letter-spacing: .1em;
+      z-index: 3;
+    }
+
+    /* ── Control buttons ────────────────────────────────────────── */
+    .controls {
+      display: flex;
+      gap: 12px;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 13px 0;
+      border: none;
+      border-radius: var(--radius);
+      font-family: var(--sans);
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all .2s;
+      position: relative;
+      overflow: hidden;
+    }
+    .btn::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: rgba(255,255,255,.08);
+      opacity: 0;
+      transition: opacity .2s;
+    }
+    .btn:hover::after  { opacity: 1; }
+    .btn:active        { transform: scale(.97); }
+    .btn:disabled      { opacity: .35; cursor: not-allowed; }
+    .btn:disabled::after { display: none; }
+
+    .btn-start {
+      background: var(--accent);
+      color: #000;
+      box-shadow: 0 0 20px var(--accent-glow);
+    }
+    .btn-start:hover:not(:disabled) {
+      box-shadow: 0 0 30px rgba(0,230,118,.35);
+    }
+
+    .btn-stop {
+      background: var(--bg-lift);
+      color: var(--danger);
+      border: 1px solid var(--border-hi);
+    }
+    .btn-stop:hover:not(:disabled) {
+      border-color: var(--danger);
+      box-shadow: 0 0 16px rgba(255,61,87,.15);
+    }
+
+    /* ── Sidebar ────────────────────────────────────────────────── */
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* Section heading */
+    .section-head {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      color: var(--text-3);
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 4px;
+    }
+
+    /* Stat card */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 18px 20px;
+    }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .stat-item { display: flex; flex-direction: column; gap: 5px; }
+
+    .stat-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--text-3);
+    }
+
+    .stat-value {
+      font-family: var(--mono);
+      font-size: 26px;
+      color: var(--text-1);
+      line-height: 1;
+      transition: color .3s;
+    }
+    .stat-value.accent { color: var(--accent); }
+    .stat-value.warn   { color: var(--warn); }
+
+    .stat-unit {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-3);
+      margin-top: 2px;
+    }
+
+    /* Person count big display */
+    .person-display {
+      text-align: center;
+      padding: 24px 0 20px;
+    }
+    .person-count-num {
+      font-family: var(--mono);
+      font-size: 72px;
+      line-height: 1;
+      color: var(--accent);
+      text-shadow: 0 0 30px var(--accent-glow);
+      transition: all .3s;
+    }
+    .person-count-num.zero { color: var(--text-3); text-shadow: none; }
+    .person-count-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      color: var(--text-3);
+      margin-top: 8px;
+    }
+
+    /* FPS bar */
+    .fps-bar-wrap {
+      margin-top: 14px;
+    }
+    .fps-bar-label {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--text-3);
+      margin-bottom: 6px;
+    }
+    .fps-bar-label span { color: var(--text-1); }
+    .fps-track {
+      height: 4px;
+      background: var(--bg-lift);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .fps-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+      border-radius: 2px;
+      width: 0%;
+      transition: width .6s ease;
+    }
+
+    /* Detection log */
+    .log-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 200px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+    .log-item {
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--text-2);
+      padding: 7px 10px;
+      background: var(--bg-lift);
+      border-radius: 4px;
+      border-left: 2px solid var(--border);
+      animation: slide-in .25s ease;
+    }
+    .log-item.detect { border-left-color: var(--accent); color: var(--text-1); }
+    .log-item.warn   { border-left-color: var(--warn); }
+    @keyframes slide-in {
+      from { opacity: 0; transform: translateX(-6px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    /* Status indicator */
+    .sys-status {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 16px;
+      background: var(--bg-lift);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--text-2);
+      transition: border-color .3s, color .3s;
+    }
+    .sys-status.running { border-color: var(--accent); color: var(--accent); }
+    .sys-status.error   { border-color: var(--danger); color: var(--danger); }
+    .sys-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: currentColor;
+      flex-shrink: 0;
+    }
+    .sys-status.running .sys-dot { animation: blink 1s step-start infinite; }
+
+    /* Toast notification */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(80px);
+      background: var(--bg-card);
+      border: 1px solid var(--border-hi);
+      border-radius: var(--radius);
+      padding: 12px 22px;
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--text-1);
+      box-shadow: var(--shadow);
+      transition: transform .35s cubic-bezier(.34,1.56,.64,1);
+      z-index: 9999;
+      white-space: nowrap;
+    }
+    .toast.show { transform: translateX(-50%) translateY(0); }
+    .toast.ok   { border-color: var(--accent); color: var(--accent); }
+    .toast.err  { border-color: var(--danger); color: var(--danger); }
+
+    /* Uptime */
+    .uptime-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--text-3);
+      padding-top: 12px;
+      margin-top: 10px;
+      border-top: 1px solid var(--border);
+    }
+    .uptime-row span { color: var(--text-2); }
+
+    /* ── Responsive ─────────────────────────────────────────────── */
+    @media (max-width: 800px) {
+      main {
+        grid-template-columns: 1fr;
+        padding: 14px 16px;
+      }
+      .sidebar { order: -1; }
+      .stat-grid { grid-template-columns: repeat(4, 1fr); }
+    }
+  </style>
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- ── Header ──────────────────────────────────────────────────── -->
+  <header>
+    <div class="brand">
+      <div class="brand-icon"></div>
+      <div class="brand-name">Vision<span>Track</span> Edu</div>
+    </div>
+    <div class="header-right">
+      <div class="status-badge" id="headerBadge">
+        <div class="status-dot"></div>
+        <span id="headerStatus">OFFLINE</span>
+      </div>
+      <div class="clock" id="clock">--:--:--</div>
+    </div>
+  </header>
+
+  <!-- ── Main ────────────────────────────────────────────────────── -->
+  <main>
+
+    <!-- ── Video column ───────────────────────────────────────────── -->
+    <div class="video-panel">
+
+      <div class="video-label">Camera Feed — CH01 / Webcam</div>
+
+      <div class="video-wrapper">
+        <img class="cam-feed"
+             id="camFeed"
+             src="/video_feed"
+             alt="Camera stream" />
+
+        <div class="rec-badge" id="recBadge">
+          <div class="rec-dot"></div> REC
+        </div>
+
+        <div class="channel-label" id="channelLabel">CH01 · STANDBY</div>
+      </div>
+
+      <div class="controls">
+        <button class="btn btn-start" id="btnStart" onclick="startDetection()">
+          ▶ &nbsp; Start Detection
+        </button>
+        <button class="btn btn-stop"  id="btnStop"  onclick="stopDetection()" disabled>
+          ■ &nbsp; Stop
+        </button>
+      </div>
+
+    </div>
+
+    <!-- ── Sidebar ─────────────────────────────────────────────────── -->
+    <div class="sidebar">
+
+      <!-- System status -->
+      <div class="card">
+        <div class="section-head">System Status</div>
+        <div class="sys-status" id="sysStatus">
+          <div class="sys-dot"></div>
+          <span id="sysStatusText">DETECTOR OFFLINE</span>
+        </div>
+
+        <!-- FPS bar -->
+        <div class="fps-bar-wrap">
+          <div class="fps-bar-label">
+            PROCESSING SPEED <span id="fpsLabel">0.0 fps</span>
+          </div>
+          <div class="fps-track"><div class="fps-fill" id="fpsFill"></div></div>
+        </div>
+
+        <div class="uptime-row">
+          UPTIME <span id="uptimeLabel">00:00:00</span>
+        </div>
+      </div>
+
+      <!-- Person count -->
+      <div class="card">
+        <div class="section-head">Detection</div>
+        <div class="person-display">
+          <div class="person-count-num zero" id="personCount">0</div>
+          <div class="person-count-label">Persons Detected</div>
+        </div>
+
+        <div class="stat-grid">
+          <div class="stat-item">
+            <div class="stat-label">Total Frames</div>
+            <div class="stat-value" id="totalFrames">0</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Live FPS</div>
+            <div class="stat-value accent" id="liveFps">—</div>
+            <div class="stat-unit">frames / sec</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Event log -->
+      <div class="card">
+        <div class="section-head">Event Log</div>
+        <ul class="log-list" id="logList">
+          <li class="log-item">System initialised — ready.</li>
+        </ul>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- ── JavaScript ──────────────────────────────────────────────────── -->
+<script>
+  /* ── State ──────────────────────────────────────────────────── */
+  let pollInterval  = null;
+  let isRunning     = false;
+  const MAX_LOG     = 40;       // max log entries shown
+
+  /* ── Clock ──────────────────────────────────────────────────── */
+  function tickClock() {
+    const now = new Date();
+    document.getElementById('clock').textContent =
+      now.toTimeString().slice(0, 8);
+  }
+  tickClock();
+  setInterval(tickClock, 1000);
+
+  /* ── Toast ──────────────────────────────────────────────────── */
+  let toastTimer = null;
+  function showToast(msg, type = '') {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className   = `toast show ${type}`;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.className = 'toast'; }, 3000);
+  }
+
+  /* ── Log ────────────────────────────────────────────────────── */
+  function addLog(msg, cls = '') {
+    const list = document.getElementById('logList');
+    const li   = document.createElement('li');
+    const time = new Date().toTimeString().slice(0, 8);
+    li.className   = `log-item ${cls}`;
+    li.textContent = `[${time}]  ${msg}`;
+    list.prepend(li);
+
+    // Keep list from growing too long
+    while (list.children.length > MAX_LOG) {
+      list.removeChild(list.lastChild);
+    }
+  }
+
+  /* ── Update UI from stats JSON ──────────────────────────────── */
+  let lastCount = 0;
+
+  function applyStats(data) {
+    const { fps, person_count, total_frames, uptime_sec, status } = data;
+
+    /* FPS */
+    const fpsVal = parseFloat(fps) || 0;
+    document.getElementById('liveFps').textContent   = fpsVal.toFixed(1);
+    document.getElementById('fpsLabel').textContent  = fpsVal.toFixed(1) + ' fps';
+    // max expected fps ~30; fill bar proportionally
+    document.getElementById('fpsFill').style.width   = Math.min(fpsVal / 30 * 100, 100) + '%';
+
+    /* Person count */
+    const count  = parseInt(person_count) || 0;
+    const el     = document.getElementById('personCount');
+    el.textContent = count;
+    el.className   = 'person-count-num' + (count === 0 ? ' zero' : '');
+
+    if (count !== lastCount) {
+      if (count > 0) {
+        addLog(`${count} person${count > 1 ? 's' : ''} detected  (${fpsVal.toFixed(1)} fps)`, 'detect');
+      }
+      lastCount = count;
+    }
+
+    /* Total frames */
+    document.getElementById('totalFrames').textContent =
+      parseInt(total_frames || 0).toLocaleString();
+
+    /* Uptime */
+    const s   = parseInt(uptime_sec) || 0;
+    const hh  = String(Math.floor(s / 3600)).padStart(2, '0');
+    const mm  = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+    const ss  = String(s % 60).padStart(2, '0');
+    document.getElementById('uptimeLabel').textContent = `${hh}:${mm}:${ss}`;
+
+    /* Status badge + system status card */
+    setStatusUI(status, data.error);
+  }
+
+  function setStatusUI(status, errorMsg = '') {
+    const badge  = document.getElementById('headerBadge');
+    const badgeTx= document.getElementById('headerStatus');
+    const sysDiv = document.getElementById('sysStatus');
+    const sysTx  = document.getElementById('sysStatusText');
+    const recBadge= document.getElementById('recBadge');
+    const chanLbl = document.getElementById('channelLabel');
+
+    // Reset classes
+    badge.className  = 'status-badge';
+    sysDiv.className = 'sys-status';
+
+    if (status === 'running') {
+      badge.classList.add('live');
+      badgeTx.textContent  = 'LIVE';
+      sysDiv.classList.add('running');
+      sysTx.textContent    = 'DETECTOR RUNNING';
+      recBadge.classList.add('visible');
+      chanLbl.textContent  = 'CH01 · LIVE';
+    } else if (status === 'starting') {
+      badgeTx.textContent  = 'STARTING';
+      sysTx.textContent    = 'INITIALISING MODEL …';
+      chanLbl.textContent  = 'CH01 · STARTING';
+    } else if (status === 'error') {
+      sysDiv.classList.add('error');
+      badgeTx.textContent  = 'ERROR';
+      sysTx.textContent    = (errorMsg || 'ERROR').toUpperCase();
+      recBadge.classList.remove('visible');
+      chanLbl.textContent  = 'CH01 · ERROR';
+    } else {
+      badgeTx.textContent  = 'OFFLINE';
+      sysTx.textContent    = 'DETECTOR OFFLINE';
+      recBadge.classList.remove('visible');
+      chanLbl.textContent  = 'CH01 · STANDBY';
+    }
+  }
+
+  /* ── Poll stats ─────────────────────────────────────────────── */
+  async function pollStats() {
+    try {
+      const res  = await fetch('/stats');
+      const data = await res.json();
+      applyStats(data);
+    } catch (_) { /* network hiccup — ignore */ }
+  }
+
+  /* ── Start ──────────────────────────────────────────────────── */
+  async function startDetection() {
+    document.getElementById('btnStart').disabled = true;
+
+    try {
+      const res  = await fetch('/start', { method: 'POST' });
+      const data = await res.json();
+
+      if (data.ok) {
+        isRunning = true;
+        document.getElementById('btnStop').disabled  = false;
+        showToast('Detection started', 'ok');
+        addLog('Detection started.');
+
+        // Start polling
+        pollInterval = setInterval(pollStats, 1000);
+        pollStats();   // immediate first tick
+      } else {
+        document.getElementById('btnStart').disabled = false;
+        showToast(data.message || 'Failed to start', 'err');
+        addLog('ERROR: ' + (data.message || 'Start failed.'), 'warn');
+      }
+    } catch (err) {
+      document.getElementById('btnStart').disabled = false;
+      showToast('Network error — is the server running?', 'err');
+      addLog('Network error: ' + err.message, 'warn');
+    }
+  }
+
+  /* ── Stop ───────────────────────────────────────────────────── */
+  async function stopDetection() {
+    document.getElementById('btnStop').disabled = true;
+
+    try {
+      const res  = await fetch('/stop', { method: 'POST' });
+      const data = await res.json();
+
+      if (data.ok) {
+        isRunning = false;
+        document.getElementById('btnStart').disabled = false;
+        clearInterval(pollInterval);
+        pollInterval = null;
+        showToast('Detection stopped', '');
+        addLog('Detection stopped.');
+        // Reset stats visually
+        applyStats({ fps: 0, person_count: 0, total_frames: 0, uptime_sec: 0, status: 'stopped' });
+      } else {
+        document.getElementById('btnStop').disabled = false;
+        showToast(data.message || 'Stop failed', 'err');
+      }
+    } catch (err) {
+      document.getElementById('btnStop').disabled = false;
+      showToast('Network error', 'err');
+    }
+  }
+
+  /* ── Init: check server status on page load ─────────────────── */
+  (async () => {
+    try {
+      const res  = await fetch('/stats');
+      const data = await res.json();
+      applyStats(data);
+      if (data.status === 'running') {
+        // Resume polling if server was already running
+        isRunning = true;
+        document.getElementById('btnStart').disabled = true;
+        document.getElementById('btnStop').disabled  = false;
+        pollInterval = setInterval(pollStats, 1000);
+        addLog('Reconnected to running session.');
+      }
+    } catch (_) {
+      addLog('Could not reach server — retrying on action.', 'warn');
+    }
+  })();
+</script>
+
+</body>
+</html>
